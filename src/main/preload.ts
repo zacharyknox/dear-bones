@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('db-get-settings'),
   updateSetting: (key: string, value: any) => ipcRenderer.invoke('db-update-setting', key, value),
   
-  // File operations
-  exportData: () => ipcRenderer.invoke('export-data'),
-  importData: () => ipcRenderer.invoke('import-data'),
+  // CSV File operations
+  exportCSV: (deckId?: string) => ipcRenderer.invoke('export-csv', deckId),
+  importCSV: (targetDeckId?: string) => ipcRenderer.invoke('import-csv', targetDeckId),
 }); 

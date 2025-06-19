@@ -1,5 +1,5 @@
-import React from 'react';
-import { Moon, Sun, Monitor } from 'lucide-react';
+import React, { useState } from 'react';
+import { Moon, Sun, Monitor, Download, Upload } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import type { Theme } from '../../types';
 
@@ -9,10 +9,43 @@ interface SettingsViewProps {
 }
 
 export function SettingsView({ theme, onThemeChange }: SettingsViewProps) {
-  const { settings, updateSettings } = useAppStore();
+  const { settings, updateSettings, exportDeckToCSV, importDeckFromCSV } = useAppStore();
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<any>(null);
 
   const handleSettingChange = async (key: keyof typeof settings, value: any) => {
     await updateSettings({ [key]: value });
+  };
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const result = await exportDeckToCSV();
+      if (result.success) {
+        // Show success message - could be enhanced with a toast system
+        console.log('Export successful:', result.filePath);
+      }
+    } catch (error) {
+      console.error('Export failed:', error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleImport = async () => {
+    setIsImporting(true);
+    setImportResult(null);
+    try {
+      const result = await importDeckFromCSV();
+      if (result.success) {
+        setImportResult(result);
+      }
+    } catch (error) {
+      console.error('Import failed:', error);
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const themeOptions = [
@@ -144,31 +177,70 @@ export function SettingsView({ theme, onThemeChange }: SettingsViewProps) {
             </div>
           </div>
 
-          {/* Data */}
+          {/* Data Import/Export */}
           <div className="card p-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-              Data
+              Data Management
             </h3>
             
             <div className="space-y-4">
-              <div className="text-center">
+              <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  Export and import functionality coming soon!
+                  Export your flashcard decks to CSV format or import cards from CSV files.
                 </p>
                 <div className="flex justify-center space-x-4">
                   <button
-                    className="btn-secondary"
-                    disabled
+                    onClick={handleExport}
+                    disabled={isExporting}
+                    className="btn-secondary flex items-center space-x-2"
                   >
-                    Export Data
+                    <Download size={16} />
+                    <span>{isExporting ? 'Exporting...' : 'Export All Decks'}</span>
                   </button>
                   <button
-                    className="btn-secondary"
-                    disabled
+                    onClick={handleImport}
+                    disabled={isImporting}
+                    className="btn-secondary flex items-center space-x-2"
                   >
-                    Import Data
+                    <Upload size={16} />
+                    <span>{isImporting ? 'Importing...' : 'Import from CSV'}</span>
                   </button>
                 </div>
+              </div>
+
+              {/* Import Results */}
+              {importResult && (
+                <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                  <h4 className="font-medium text-green-800 dark:text-green-200 mb-2">
+                    Import Successful!
+                  </h4>
+                  <div className="text-sm text-green-700 dark:text-green-300 space-y-1">
+                    <p>Cards imported: {importResult.imported}</p>
+                    {importResult.decksCreated?.length > 0 && (
+                      <p>New decks created: {importResult.decksCreated.join(', ')}</p>
+                    )}
+                    {importResult.errors?.length > 0 && (
+                      <div className="mt-2">
+                        <p className="font-medium">Errors:</p>
+                        <ul className="list-disc list-inside space-y-1">
+                          {importResult.errors.slice(0, 5).map((error: string, index: number) => (
+                            <li key={index} className="text-xs">{error}</li>
+                          ))}
+                          {importResult.errors.length > 5 && (
+                            <li className="text-xs">... and {importResult.errors.length - 5} more</li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                <p className="mb-2"><strong>CSV Format:</strong></p>
+                <p>• Single deck: Front, Back, Tags, Difficulty, Interval, Study Count</p>
+                <p>• Multiple decks: Deck Name, Deck Emoji, Front, Back, Tags, Difficulty, Interval, Study Count</p>
+                <p>• Tags should be separated by semicolons (;)</p>
               </div>
             </div>
           </div>

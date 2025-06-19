@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import { Database } from 'sqlite3';
+import * as fs from 'fs/promises';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require('electron-squirrel-startup')) {
@@ -454,36 +455,342 @@ ipcMain.handle('db-update-setting', (event, key, value) => {
   });
 });
 
+// CSV Utility Functions
+const parseCSVRow = (row: string): string[] => {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  let i = 0;
+
+  while (i < row.length) {
+    const char = row[i];
+    const nextChar = row[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        // Escaped quote
+        current += '"';
+        i += 2;
+      } else {
+        // Toggle quote state
+        inQuotes = !inQuotes;
+        i++;
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+      i++;
+    } else {
+      current += char;
+      i++;
+    }
+  }
+
+  result.push(current.trim());
+  return result;
+};
+
+const generateCSVData = async (deckId?: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const query = deckId 
+      ? `SELECT c.*, d.name as deck_name, d.emoji as deck_emoji 
+         FROM cards c JOIN decks d ON c.deck_id = d.id 
+         WHERE c.deck_id = ? 
+         ORDER BY c.created_at`
+      : `SELECT c.*, d.name as deck_name, d.emoji as deck_emoji 
+         FROM cards c JOIN decks d ON c.deck_id = d.id 
+         ORDER BY d.name, c.created_at`;
+    
+    const params = deckId ? [deckId] : [];
+    
+    database.all(query, params, (err, rows) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      const csvRows: string[] = [];
+      
+      // Header row
+      if (deckId) {
+        csvRows.push('Front,Back,Tags,Difficulty,Interval,Study Count');
+      } else {
+        csvRows.push('Deck Name,Deck Emoji,Front,Back,Tags,Difficulty,Interval,Study Count');
+      }
+      
+      // Data rows
+      rows.forEach((row: any) => {
+        const tags = JSON.parse(row.tags || '[]').join(';');
+        const csvRow = deckId 
+          ? [row.front, row.back, tags, row.difficulty.toString(), row.interval.toString(), row.study_count.toString()]
+          : [row.deck_name, row.deck_emoji || '', row.front, row.back, tags, row.difficulty.toString(), row.interval.toString(), row.study_count.toString()];
+        
+        // Escape quotes and wrap fields with commas or quotes in quotes
+        const escapedRow = csvRow.map(field => {
+          const str = String(field);
+          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`;
+          }
+          return str;
+        });
+        
+        csvRows.push(escapedRow.join(','));
+      });
+      
+      resolve(csvRows.join('\n'));
+    });
+  });
+};
+
+const parseAndImportCSV = async (filePath: string, targetDeckId?: string): Promise<any> => {
+  try {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const lines = content.split('\n').filter(line => line.trim());
+    
+    if (lines.length < 2) {
+      throw new Error('CSV file must have at least a header and one data row');
+    }
+    
+    const headers = parseCSVRow(lines[0]).map(h => h.toLowerCase().trim());
+    const results = {
+      success: true,
+      imported: 0,
+      errors: [] as string[],
+      decksCreated: [] as string[]
+    };
+    
+    // Validate required headers
+    const frontIndex = headers.findIndex(h => h.includes('front'));
+    const backIndex = headers.findIndex(h => h.includes('back'));
+    
+    if (frontIndex === -1 || backIndex === -1) {
+      throw new Error('CSV must contain Front and Back columns');
+    }
+    
+    const tagsIndex = headers.findIndex(h => h.includes('tag'));
+    const deckNameIndex = headers.findIndex(h => h.includes('deck') && h.includes('name'));
+    const deckEmojiIndex = headers.findIndex(h => h.includes('deck') && h.includes('emoji'));
+    const difficultyIndex = headers.findIndex(h => h.includes('difficulty'));
+    const intervalIndex = headers.findIndex(h => h.includes('interval'));
+    const studyCountIndex = headers.findIndex(h => h.includes('study') && h.includes('count'));
+    
+    // Process each row
+    for (let i = 1; i < lines.length; i++) {
+      try {
+        const row = parseCSVRow(lines[i]);
+        
+        if (row.length < Math.max(frontIndex, backIndex) + 1) {
+          results.errors.push(`Row ${i + 1}: Insufficient columns`);
+          continue;
+        }
+        
+        const front = row[frontIndex]?.trim();
+        const back = row[backIndex]?.trim();
+        
+        if (!front || !back) {
+          results.errors.push(`Row ${i + 1}: Front and Back are required`);
+          continue;
+        }
+        
+        // Determine target deck
+        let deckId = targetDeckId;
+        
+        if (!deckId && deckNameIndex >= 0) {
+          const deckName = row[deckNameIndex]?.trim();
+          if (deckName) {
+            deckId = await findOrCreateDeck(deckName, row[deckEmojiIndex]?.trim() || '📚', results);
+          } else {
+            results.errors.push(`Row ${i + 1}: No deck specified`);
+            continue;
+          }
+        } else if (!deckId) {
+          results.errors.push(`Row ${i + 1}: No target deck specified`);
+          continue;
+        }
+        
+        // Parse tags
+        const tags = tagsIndex >= 0 ? (row[tagsIndex]?.split(';').filter(t => t.trim()) || []) : [];
+        
+        // Parse optional fields
+        const difficulty = difficultyIndex >= 0 ? parseFloat(row[difficultyIndex]) || 0 : 0;
+        const interval = intervalIndex >= 0 ? parseInt(row[intervalIndex]) || 1 : 1;
+        const studyCount = studyCountIndex >= 0 ? parseInt(row[studyCountIndex]) || 0 : 0;
+        
+        // Create card
+        await createCardFromImport(deckId, front, back, tags, difficulty, interval, studyCount);
+        results.imported++;
+        
+      } catch (error) {
+        results.errors.push(`Row ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+    
+    return results;
+    
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to import CSV'
+    };
+  }
+};
+
+const findOrCreateDeck = async (name: string, emoji: string, results: any): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    // First try to find existing deck
+    database.get('SELECT id FROM decks WHERE name = ?', [name], (err, row: any) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      if (row) {
+        resolve(row.id);
+        return;
+      }
+      
+      // Create new deck
+      const deckId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
+      const stmt = database.prepare(`
+        INSERT INTO decks (id, name, description, emoji, tags, created_at, updated_at, card_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      
+      stmt.run([
+        deckId,
+        name,
+        `Imported from CSV`,
+        emoji,
+        JSON.stringify([]),
+        Date.now(),
+        Date.now(),
+        0
+      ], function(err) {
+        if (err) {
+          reject(err);
+        } else {
+          results.decksCreated.push(name);
+          resolve(deckId);
+        }
+      });
+      
+      stmt.finalize();
+    });
+  });
+};
+
+const createCardFromImport = async (deckId: string, front: string, back: string, tags: string[], difficulty: number, interval: number, studyCount: number): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const cardId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
+    const stmt = database.prepare(`
+      INSERT INTO cards (id, deck_id, front, back, tags, created_at, updated_at, study_count, difficulty, interval, ease_factor)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run([
+      cardId,
+      deckId,
+      front,
+      back,
+      JSON.stringify(tags),
+      Date.now(),
+      Date.now(),
+      studyCount,
+      difficulty,
+      interval,
+      2.5 // Default ease factor
+    ], function(err) {
+      if (err) {
+        reject(err);
+        return;
+      }
+      
+      // Update deck card count
+      database.run(
+        'UPDATE decks SET card_count = card_count + 1, updated_at = ? WHERE id = ?',
+        [Date.now(), deckId],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+    
+    stmt.finalize();
+  });
+};
+
 // Export/Import handlers
-ipcMain.handle('export-data', async () => {
-  const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: 'dear-bones-export.json',
-    filters: [
-      { name: 'JSON Files', extensions: ['json'] }
-    ]
-  });
+ipcMain.handle('export-csv', async (event, deckId?: string) => {
+  try {
+    const deckName = deckId ? await getDeckName(deckId) : 'all-decks';
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: `${deckName}.csv`,
+      filters: [
+        { name: 'CSV Files', extensions: ['csv'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
 
-  if (!result.canceled && result.filePath) {
-    // TODO: Implement export logic
-    return result.filePath;
+    if (!result.canceled && result.filePath) {
+      try {
+        const csvData = await generateCSVData(deckId);
+        await fs.writeFile(result.filePath, csvData, 'utf-8');
+        return { success: true, filePath: result.filePath };
+      } catch (error) {
+        return { 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Failed to export CSV' 
+        };
+      }
+    }
+    return { success: false, error: 'Export cancelled' };
+  } catch (error) {
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Export failed' 
+    };
   }
-  return null;
 });
 
-ipcMain.handle('import-data', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    filters: [
-      { name: 'JSON Files', extensions: ['json'] }
-    ],
-    properties: ['openFile']
-  });
+ipcMain.handle('import-csv', async (event, targetDeckId?: string) => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      filters: [
+        { name: 'CSV Files', extensions: ['csv'] },
+        { name: 'All Files', extensions: ['*'] }
+      ],
+      properties: ['openFile']
+    });
 
-  if (!result.canceled && result.filePaths.length > 0) {
-    // TODO: Implement import logic
-    return result.filePaths[0];
+    if (!result.canceled && result.filePaths.length > 0) {
+      const importResult = await parseAndImportCSV(result.filePaths[0], targetDeckId);
+      return importResult;
+    }
+    return { success: false, error: 'Import cancelled' };
+  } catch (error) {
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Import failed' 
+    };
   }
-  return null;
 });
+
+const getDeckName = async (deckId: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    database.get('SELECT name FROM decks WHERE id = ?', [deckId], (err, row: any) => {
+      if (err) {
+        reject(err);
+      } else if (row) {
+        // Replace spaces and special characters for filename
+        const safeName = row.name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        resolve(safeName || 'deck');
+      } else {
+        resolve('deck');
+      }
+    });
+  });
+};
 
 // Seed database with sample data if empty
 const seedDatabase = (): void => {

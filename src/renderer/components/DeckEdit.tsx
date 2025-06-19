@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Edit3, Trash2, Save } from 'lucide-react';
+import { ArrowLeft, Plus, Edit3, Trash2, Save, Download, Upload } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import type { AppView } from '../App';
 import type { Deck, Card } from '../../types';
@@ -10,7 +10,7 @@ interface DeckEditProps {
 }
 
 export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
-  const { getDeck, getCardsByDeck, createDeck, updateDeck, createCard, updateCard, deleteCard } = useAppStore();
+  const { getDeck, getCardsByDeck, createDeck, updateDeck, createCard, updateCard, deleteCard, exportDeckToCSV, importDeckFromCSV } = useAppStore();
   
   const isEditing = deckId !== null;
   const existingDeck = isEditing ? getDeck(deckId) : null;
@@ -34,6 +34,11 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
   });
 
   const [tagInput, setTagInput] = useState('');
+  
+  // CSV state
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importResult, setImportResult] = useState<any>(null);
 
   useEffect(() => {
     if (existingDeck) {
@@ -106,6 +111,39 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
     }
   };
 
+  const handleExportDeck = async () => {
+    if (!deckId) return;
+    
+    setIsExporting(true);
+    try {
+      const result = await exportDeckToCSV(deckId);
+      if (result.success) {
+        console.log('Deck exported successfully:', result.filePath);
+      }
+    } catch (error) {
+      console.error('Export failed:', error);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleImportToDeck = async () => {
+    if (!deckId) return;
+    
+    setIsImporting(true);
+    setImportResult(null);
+    try {
+      const result = await importDeckFromCSV(deckId);
+      if (result.success) {
+        setImportResult(result);
+      }
+    } catch (error) {
+      console.error('Import failed:', error);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
@@ -123,19 +161,76 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
             </h2>
           </div>
           
-          <button
-            onClick={handleSaveDeck}
-            className="btn-primary flex items-center space-x-2"
-            disabled={!deckForm.name.trim()}
-          >
-            <Save size={16} />
-            <span>Save Deck</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            {/* CSV Actions for existing decks */}
+            {isEditing && deckId && (
+              <>
+                <button
+                  onClick={handleExportDeck}
+                  disabled={isExporting}
+                  className="btn-secondary flex items-center space-x-2"
+                  title="Export this deck to CSV"
+                >
+                  <Download size={16} />
+                  <span>{isExporting ? 'Exporting...' : 'Export CSV'}</span>
+                </button>
+                <button
+                  onClick={handleImportToDeck}
+                  disabled={isImporting}
+                  className="btn-secondary flex items-center space-x-2"
+                  title="Import cards from CSV to this deck"
+                >
+                  <Upload size={16} />
+                  <span>{isImporting ? 'Importing...' : 'Import CSV'}</span>
+                </button>
+              </>
+            )}
+            
+            <button
+              onClick={handleSaveDeck}
+              className="btn-primary flex items-center space-x-2"
+              disabled={!deckForm.name.trim()}
+            >
+              <Save size={16} />
+              <span>Save Deck</span>
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-6">
+          {/* Import Results */}
+          {importResult && (
+            <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
+              <h4 className="font-medium text-green-800 dark:text-green-200 mb-2">
+                Import Successful!
+              </h4>
+              <div className="text-sm text-green-700 dark:text-green-300 space-y-1">
+                <p>Cards imported: {importResult.imported}</p>
+                {importResult.errors?.length > 0 && (
+                  <div className="mt-2">
+                    <p className="font-medium">Errors:</p>
+                    <ul className="list-disc list-inside space-y-1">
+                      {importResult.errors.slice(0, 3).map((error: string, index: number) => (
+                        <li key={index} className="text-xs">{error}</li>
+                      ))}
+                      {importResult.errors.length > 3 && (
+                        <li className="text-xs">... and {importResult.errors.length - 3} more</li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setImportResult(null)}
+                className="mt-2 text-xs text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* Deck Form */}
           <div className="card p-6">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
@@ -246,6 +341,15 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
                   <span>Add Card</span>
                 </button>
               </div>
+
+              {/* CSV Format Info for this deck */}
+              {existingCards.length > 0 && (
+                <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                    <strong>CSV Format for this deck:</strong> Front, Back, Tags, Difficulty, Interval, Study Count
+                  </p>
+                </div>
+              )}
 
               {/* Card Form */}
               {showCardForm && (

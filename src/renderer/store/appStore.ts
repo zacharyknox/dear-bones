@@ -18,8 +18,8 @@ declare global {
       createStudySession: (session: any) => Promise<any>;
       getSettings: () => Promise<Record<string, any>>;
       updateSetting: (key: string, value: any) => Promise<any>;
-      exportData: () => Promise<string | null>;
-      importData: () => Promise<any>;
+      exportCSV: (deckId?: string) => Promise<any>;
+      importCSV: (targetDeckId?: string) => Promise<any>;
     };
   }
 }
@@ -58,6 +58,10 @@ interface AppState {
   
   // Settings actions
   updateSettings: (updates: Partial<AppSettings>) => Promise<void>;
+  
+  // CSV Import/Export actions
+  exportDeckToCSV: (deckId?: string) => Promise<any>;
+  importDeckFromCSV: (targetDeckId?: string) => Promise<any>;
 }
 
 export const useAppStore = create<AppState>()(
@@ -307,6 +311,43 @@ export const useAppStore = create<AppState>()(
         } catch (error) {
           console.error('Error updating settings:', error);
           set({ error: error instanceof Error ? error.message : 'Failed to update settings' });
+        }
+      },
+
+      // CSV Import/Export actions
+      exportDeckToCSV: async (deckId) => {
+        try {
+          const result = await window.electronAPI.exportCSV(deckId);
+          if (result.success) {
+            set({ error: null });
+            return result;
+          } else {
+            set({ error: result.error });
+            return result;
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : 'Export failed';
+          set({ error: errorMsg });
+          return { success: false, error: errorMsg };
+        }
+      },
+
+      importDeckFromCSV: async (targetDeckId) => {
+        try {
+          const result = await window.electronAPI.importCSV(targetDeckId);
+          if (result.success) {
+            // Refresh data after import
+            await get().initializeApp();
+            set({ error: null });
+            return result;
+          } else {
+            set({ error: result.error });
+            return result;
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : 'Import failed';
+          set({ error: errorMsg });
+          return { success: false, error: errorMsg };
         }
       },
     }),
