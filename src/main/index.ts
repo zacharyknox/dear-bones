@@ -545,13 +545,71 @@ const generateCSVData = async (deckId?: string): Promise<string> => {
 const parseAndImportCSV = async (filePath: string, targetDeckId?: string): Promise<any> => {
   try {
     const content = await fs.readFile(filePath, 'utf-8');
-    const lines = content.split('\n').filter(line => line.trim());
     
-    if (lines.length < 2) {
+    // Parse CSV content character by character to handle quoted fields with line breaks
+    const parseCSVContent = (csvContent: string): string[][] => {
+      const rows: string[][] = [];
+      let currentRow: string[] = [];
+      let currentField = '';
+      let inQuotes = false;
+      let i = 0;
+      
+      while (i < csvContent.length) {
+        const char = csvContent[i];
+        const nextChar = csvContent[i + 1];
+        
+        if (char === '"') {
+          if (inQuotes && nextChar === '"') {
+            // Escaped quote
+            currentField += '"';
+            i += 2;
+          } else {
+            // Toggle quote state
+            inQuotes = !inQuotes;
+            i++;
+          }
+        } else if (char === ',' && !inQuotes) {
+          // End of field
+          currentRow.push(currentField.trim());
+          currentField = '';
+          i++;
+        } else if (char === '\n' && !inQuotes) {
+          // End of row (only if not in quotes)
+          currentRow.push(currentField.trim());
+          if (currentRow.some(field => field.length > 0)) {
+            rows.push(currentRow);
+          }
+          currentRow = [];
+          currentField = '';
+          i++;
+        } else if (char === '\r') {
+          // Skip carriage return
+          i++;
+        } else {
+          // Regular character
+          currentField += char;
+          i++;
+        }
+      }
+      
+      // Handle last field and row
+      if (currentField.trim() || currentRow.length > 0) {
+        currentRow.push(currentField.trim());
+        if (currentRow.some(field => field.length > 0)) {
+          rows.push(currentRow);
+        }
+      }
+      
+      return rows;
+    };
+    
+    const rows = parseCSVContent(content);
+    
+    if (rows.length < 2) {
       throw new Error('CSV file must have at least a header and one data row');
     }
     
-    const headers = parseCSVRow(lines[0]).map(h => h.toLowerCase().trim());
+    const headers = rows[0].map(h => h.toLowerCase().trim());
     const results = {
       success: true,
       imported: 0,
@@ -574,10 +632,10 @@ const parseAndImportCSV = async (filePath: string, targetDeckId?: string): Promi
     const intervalIndex = headers.findIndex(h => h.includes('interval'));
     const studyCountIndex = headers.findIndex(h => h.includes('study') && h.includes('count'));
     
-    // Process each row
-    for (let i = 1; i < lines.length; i++) {
+    // Process each row (skip header)
+    for (let i = 1; i < rows.length; i++) {
       try {
-        const row = parseCSVRow(lines[i]);
+        const row = rows[i];
         
         if (row.length < Math.max(frontIndex, backIndex) + 1) {
           results.errors.push(`Row ${i + 1}: Insufficient columns`);

@@ -152,7 +152,7 @@ export function StudyView({ deckId, onViewChange }: StudyViewProps) {
             onClick={handleFlip}
           >
             <div className="text-center">
-              <div className="text-lg text-gray-900 dark:text-gray-100 mb-4">
+              <div className="text-lg text-gray-900 dark:text-gray-100 mb-4 flashcard-text">
                 {isFlipped ? currentCard.back : currentCard.front}
               </div>
               {!isFlipped && (

@@ -425,7 +425,7 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
                           <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
                             Front
                           </h5>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
+                          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 flashcard-text">
                             {card.front}
                           </p>
                         </div>
@@ -433,7 +433,7 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
                           <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
                             Back
                           </h5>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
+                          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 flashcard-text">
                             {card.back}
                           </p>
                         </div>
