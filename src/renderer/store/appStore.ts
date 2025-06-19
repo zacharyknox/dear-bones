@@ -2,6 +2,28 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import type { Deck, Card, StudySession, StudyStats, AppSettings } from '../../types';
 
+// Extend window interface for Electron API
+declare global {
+  interface Window {
+    electronAPI: {
+      getDecks: () => Promise<Deck[]>;
+      createDeck: (deck: any) => Promise<any>;
+      updateDeck: (id: string, updates: any) => Promise<any>;
+      deleteDeck: (id: string) => Promise<any>;
+      getCards: (deckId: string) => Promise<Card[]>;
+      createCard: (card: any) => Promise<any>;
+      updateCard: (id: string, updates: any) => Promise<any>;
+      deleteCard: (id: string) => Promise<any>;
+      getStudySessions: (deckId?: string) => Promise<StudySession[]>;
+      createStudySession: (session: any) => Promise<any>;
+      getSettings: () => Promise<Record<string, any>>;
+      updateSetting: (key: string, value: any) => Promise<any>;
+      exportData: () => Promise<string | null>;
+      importData: () => Promise<any>;
+    };
+  }
+}
+
 interface AppState {
   // Data
   decks: Deck[];
@@ -59,66 +81,38 @@ export const useAppStore = create<AppState>()(
       initializeApp: async () => {
         set({ isLoading: true, error: null });
         try {
-          // TODO: Load data from SQLite database
-          // For now, we'll use mock data
-          const mockDecks: Deck[] = [
-            {
-              id: '1',
-              name: 'Spanish Vocabulary',
-              description: 'Essential Spanish words and phrases',
-              emoji: '🇪🇸',
-              tags: ['language', 'spanish'],
-              createdAt: new Date(),
-              updatedAt: new Date(),
-              cardCount: 25,
-            },
-            {
-              id: '2',
-              name: 'Biology Terms',
-              description: 'Key concepts in biology',
-              emoji: '🧬',
-              tags: ['science', 'biology'],
-              createdAt: new Date(),
-              updatedAt: new Date(),
-              cardCount: 15,
-            },
-          ];
-
-          const mockCards: Card[] = [
-            {
-              id: '1',
-              deckId: '1',
-              front: 'Hello',
-              back: 'Hola',
-              tags: ['greetings'],
-              createdAt: new Date(),
-              updatedAt: new Date(),
-              studyCount: 0,
-              difficulty: 0,
-              interval: 1,
-              easeFactor: 2.5,
-            },
-            {
-              id: '2',
-              deckId: '1',
-              front: 'Thank you',
-              back: 'Gracias',
-              tags: ['greetings'],
-              createdAt: new Date(),
-              updatedAt: new Date(),
-              studyCount: 0,
-              difficulty: 0,
-              interval: 1,
-              easeFactor: 2.5,
-            },
-          ];
+          // Load decks from database
+          const decks = await window.electronAPI.getDecks();
+          
+          // Load all cards for all decks
+          const allCards: Card[] = [];
+          for (const deck of decks) {
+            const deckCards = await window.electronAPI.getCards(deck.id);
+            allCards.push(...deckCards);
+          }
+          
+          // Load study sessions
+          const studySessions = await window.electronAPI.getStudySessions();
+          
+          // Load settings
+          const dbSettings = await window.electronAPI.getSettings();
+          const settings = {
+            theme: dbSettings.theme || 'system',
+            studyMode: dbSettings.studyMode || 'spaced-repetition',
+            cardsPerSession: dbSettings.cardsPerSession || 20,
+            showTimer: dbSettings.showTimer !== undefined ? dbSettings.showTimer : true,
+            enableSounds: dbSettings.enableSounds !== undefined ? dbSettings.enableSounds : false,
+          };
 
           set({ 
-            decks: mockDecks, 
-            cards: mockCards, 
+            decks, 
+            cards: allCards, 
+            studySessions,
+            settings,
             isLoading: false 
           });
         } catch (error) {
+          console.error('Error initializing app:', error);
           set({ 
             error: error instanceof Error ? error.message : 'Failed to initialize app', 
             isLoading: false 
@@ -128,34 +122,55 @@ export const useAppStore = create<AppState>()(
 
       // Deck actions
       createDeck: async (deckData) => {
-        const newDeck: Deck = {
-          ...deckData,
-          id: Date.now().toString(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          cardCount: 0,
-        };
-        
-        set(state => ({
-          decks: [...state.decks, newDeck]
-        }));
+        try {
+          const newDeck: Deck = {
+            ...deckData,
+            id: Date.now().toString(),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            cardCount: 0,
+          };
+          
+          await window.electronAPI.createDeck(newDeck);
+          
+          set(state => ({
+            decks: [...state.decks, newDeck]
+          }));
+        } catch (error) {
+          console.error('Error creating deck:', error);
+          set({ error: error instanceof Error ? error.message : 'Failed to create deck' });
+        }
       },
 
       updateDeck: async (id, updates) => {
-        set(state => ({
-          decks: state.decks.map(deck =>
-            deck.id === id 
-              ? { ...deck, ...updates, updatedAt: new Date() }
-              : deck
-          )
-        }));
+        try {
+          await window.electronAPI.updateDeck(id, updates);
+          
+          set(state => ({
+            decks: state.decks.map(deck =>
+              deck.id === id 
+                ? { ...deck, ...updates, updatedAt: new Date() }
+                : deck
+            )
+          }));
+        } catch (error) {
+          console.error('Error updating deck:', error);
+          set({ error: error instanceof Error ? error.message : 'Failed to update deck' });
+        }
       },
 
       deleteDeck: async (id) => {
-        set(state => ({
-          decks: state.decks.filter(deck => deck.id !== id),
-          cards: state.cards.filter(card => card.deckId !== id)
-        }));
+        try {
+          await window.electronAPI.deleteDeck(id);
+          
+          set(state => ({
+            decks: state.decks.filter(deck => deck.id !== id),
+            cards: state.cards.filter(card => card.deckId !== id)
+          }));
+        } catch (error) {
+          console.error('Error deleting deck:', error);
+          set({ error: error instanceof Error ? error.message : 'Failed to delete deck' });
+        }
       },
 
       getDeck: (id) => {
@@ -164,49 +179,70 @@ export const useAppStore = create<AppState>()(
 
       // Card actions
       createCard: async (cardData) => {
-        const newCard: Card = {
-          ...cardData,
-          id: Date.now().toString(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          studyCount: 0,
-          difficulty: 0,
-          interval: 1,
-          easeFactor: 2.5,
-        };
-        
-        set(state => ({
-          cards: [...state.cards, newCard],
-          decks: state.decks.map(deck =>
-            deck.id === cardData.deckId
-              ? { ...deck, cardCount: deck.cardCount + 1 }
-              : deck
-          )
-        }));
+        try {
+          const newCard: Card = {
+            ...cardData,
+            id: Date.now().toString(),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            studyCount: 0,
+            difficulty: 0,
+            interval: 1,
+            easeFactor: 2.5,
+          };
+          
+          await window.electronAPI.createCard(newCard);
+          
+          set(state => ({
+            cards: [...state.cards, newCard],
+            decks: state.decks.map(deck =>
+              deck.id === cardData.deckId
+                ? { ...deck, cardCount: deck.cardCount + 1 }
+                : deck
+            )
+          }));
+        } catch (error) {
+          console.error('Error creating card:', error);
+          set({ error: error instanceof Error ? error.message : 'Failed to create card' });
+        }
       },
 
       updateCard: async (id, updates) => {
-        set(state => ({
-          cards: state.cards.map(card =>
-            card.id === id 
-              ? { ...card, ...updates, updatedAt: new Date() }
-              : card
-          )
-        }));
+        try {
+          await window.electronAPI.updateCard(id, updates);
+          
+          set(state => ({
+            cards: state.cards.map(card =>
+              card.id === id 
+                ? { ...card, ...updates, updatedAt: new Date() }
+                : card
+            )
+          }));
+        } catch (error) {
+          console.error('Error updating card:', error);
+          set({ error: error instanceof Error ? error.message : 'Failed to update card' });
+        }
       },
 
       deleteCard: async (id) => {
-        const card = get().cards.find(c => c.id === id);
-        if (!card) return;
+        try {
+          const card = get().cards.find(c => c.id === id);
+          if (!card) return;
 
-        set(state => ({
-          cards: state.cards.filter(card => card.id !== id),
-          decks: state.decks.map(deck =>
-            deck.id === card.deckId
-              ? { ...deck, cardCount: deck.cardCount - 1 }
-              : deck
-          )
-        }));
+          await window.electronAPI.deleteCard(id);
+
+          set(state => ({
+            cards: state.cards.filter(card => card.id !== id),
+            decks: state.decks.map(deck =>
+              deck.id === card.deckId
+                ? { ...deck, cardCount: deck.cardCount - 1 }
+                : deck
+            )
+          }));
+        } catch (error) {
+          console.error('Error deleting card:', error);
+          set({ error: error instanceof Error ? error.message : 'Failed to delete card' });
+        }
       },
 
       getCardsByDeck: (deckId) => {
@@ -215,15 +251,22 @@ export const useAppStore = create<AppState>()(
 
       // Study actions
       recordStudySession: async (sessionData) => {
-        const newSession: StudySession = {
-          ...sessionData,
-          id: Date.now().toString(),
-          studiedAt: new Date(),
-        };
-        
-        set(state => ({
-          studySessions: [...state.studySessions, newSession]
-        }));
+        try {
+          const newSession: StudySession = {
+            ...sessionData,
+            id: Date.now().toString(),
+            studiedAt: new Date(),
+          };
+          
+          await window.electronAPI.createStudySession(newSession);
+          
+          set(state => ({
+            studySessions: [...state.studySessions, newSession]
+          }));
+        } catch (error) {
+          console.error('Error recording study session:', error);
+          set({ error: error instanceof Error ? error.message : 'Failed to record study session' });
+        }
       },
 
       getStudyStats: (deckId) => {
@@ -252,9 +295,19 @@ export const useAppStore = create<AppState>()(
 
       // Settings actions
       updateSettings: async (updates) => {
-        set(state => ({
-          settings: { ...state.settings, ...updates }
-        }));
+        try {
+          // Update each setting in the database
+          for (const [key, value] of Object.entries(updates)) {
+            await window.electronAPI.updateSetting(key, value);
+          }
+          
+          set(state => ({
+            settings: { ...state.settings, ...updates }
+          }));
+        } catch (error) {
+          console.error('Error updating settings:', error);
+          set({ error: error instanceof Error ? error.message : 'Failed to update settings' });
+        }
       },
     }),
     {
