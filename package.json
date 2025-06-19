@@ -1,0 +1,72 @@
+{
+  "name": "dear-bones",
+  "productName": "Dear Bones",
+  "version": "1.0.0",
+  "description": "A minimalist flashcards application for effective learning",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "dev": "npm run build && npm run start",
+    "build": "webpack --mode=production",
+    "build:dev": "webpack --mode=development",
+    "serve": "webpack serve --mode=development --config-name renderer",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "publish": "electron-forge publish",
+    "lint": "echo \"No linting configured\"",
+    "postinstall": "@electron/rebuild",
+    "rebuild": "@electron/rebuild"
+  },
+  "keywords": [
+    "flashcards",
+    "learning",
+    "study",
+    "education"
+  ],
+  "author": {
+    "name": "zacharyknox",
+    "email": "zachhdf@gmail.com"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "electron-squirrel-startup": "^1.0.1",
+    "lucide-react": "^0.274.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sqlite3": "^5.1.6",
+    "zustand": "^4.4.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.22.10",
+    "@babel/preset-env": "^7.22.10",
+    "@babel/preset-react": "^7.22.5",
+    "@babel/preset-typescript": "^7.22.5",
+    "@electron-forge/cli": "^7.8.1",
+    "@electron-forge/maker-deb": "^7.8.1",
+    "@electron-forge/maker-rpm": "^7.8.1",
+    "@electron-forge/maker-squirrel": "^7.8.1",
+    "@electron-forge/maker-zip": "^7.8.1",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.8.1",
+    "@electron-forge/plugin-fuses": "^7.8.1",
+    "@electron/fuses": "^1.8.0",
+    "@electron/rebuild": "^4.0.1",
+    "@types/react": "^18.2.21",
+    "@types/react-dom": "^18.2.7",
+    "autoprefixer": "^10.4.14",
+    "babel-loader": "^9.1.3",
+    "concurrently": "^8.2.2",
+    "css-loader": "^6.8.1",
+    "electron": "36.5.0",
+    "electron-rebuild": "^3.2.9",
+    "html-webpack-plugin": "^5.5.3",
+    "postcss": "^8.4.27",
+    "postcss-loader": "^7.3.3",
+    "style-loader": "^3.3.3",
+    "tailwindcss": "^3.3.3",
+    "typescript": "^5.1.6",
+    "wait-on": "^7.2.0",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^4.15.1"
+  }
+}
