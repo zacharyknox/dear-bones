@@ -7,6 +7,15 @@ module.exports = {
     name: 'Dear Bones',
     executableName: 'dear-bones',
     icon: './assets/icon', // You can add an icon file later
+    platform: 'darwin',
+    arch: 'arm64',
+    osxUniversal: {
+      // Optional: create universal binary for both Intel and Apple Silicon
+      // Remove this if you only need arm64
+    },
+    extendInfo: {
+      LSMinimumSystemVersion: '11.0', // macOS Big Sur 11.0 minimum
+    },
   },
   rebuildConfig: {},
   makers: [

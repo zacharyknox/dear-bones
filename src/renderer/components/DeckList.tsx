@@ -1,15 +1,24 @@
 import React, { useState } from 'react';
-import { Play, Edit3, Trash2, Search } from 'lucide-react';
+import { Play, Edit3, Trash2, Search, Type, Mic } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
 import type { AppView } from '../App';
+import { isAudioCard, isMixedCard } from '../../types';
 
 interface DeckListProps {
   onViewChange: (view: AppView, deckId?: string) => void;
 }
 
 export function DeckList({ onViewChange }: DeckListProps) {
-  const { decks, deleteDeck } = useAppStore();
+  const { decks, cards, deleteDeck } = useAppStore();
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Helper function to get card type stats for a deck
+  const getDeckCardTypes = (deckId: string) => {
+    const deckCards = cards.filter(card => card.deckId === deckId);
+    const hasAudio = deckCards.some(card => isAudioCard(card) || isMixedCard(card));
+    const audioCount = deckCards.filter(card => isAudioCard(card) || isMixedCard(card)).length;
+    return { hasAudio, audioCount, totalCards: deckCards.length };
+  };
 
   const filteredDecks = decks.filter(deck =>
     deck.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -82,9 +91,22 @@ export function DeckList({ onViewChange }: DeckListProps) {
                       <h3 className="font-semibold text-gray-900 dark:text-gray-100">
                         {deck.name}
                       </h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        {deck.cardCount} cards
-                      </p>
+                      <div className="flex items-center space-x-2">
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          {deck.cardCount} cards
+                        </p>
+                        {(() => {
+                          const cardTypes = getDeckCardTypes(deck.id);
+                          return cardTypes.hasAudio && (
+                            <div className="flex items-center space-x-1">
+                              <Mic size={12} className="text-green-600 dark:text-green-400" />
+                              <span className="text-xs text-green-600 dark:text-green-400">
+                                {cardTypes.audioCount}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
                   

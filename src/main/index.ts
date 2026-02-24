@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import { Database } from 'sqlite3';
 import * as fs from 'fs/promises';
+import { audioFileService } from '../utils/audioFileService';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require('electron-squirrel-startup')) {
@@ -58,8 +59,11 @@ const initDatabase = (): void => {
       CREATE TABLE IF NOT EXISTS cards (
         id TEXT PRIMARY KEY,
         deck_id TEXT NOT NULL,
-        front TEXT NOT NULL,
+        front TEXT,
         back TEXT NOT NULL,
+        type TEXT DEFAULT 'text',
+        front_audio_path TEXT,
+        front_audio_name TEXT,
         tags TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
@@ -94,10 +98,77 @@ const initDatabase = (): void => {
       if (err) {
         console.error('Error creating settings table:', err);
       } else {
-        // Seed database after tables are created
-        seedDatabase();
+        // Migrate existing database to support card types
+        migrateDatabase(() => {
+          // Seed database after tables are created and migrated
+          seedDatabase();
+        });
       }
     });
+  });
+};
+
+const migrateDatabase = (callback: () => void): void => {
+  console.log('Checking for database migrations...');
+  
+  // Check if the type column exists
+  database.all("PRAGMA table_info(cards)", (err, rows: any[]) => {
+    if (err) {
+      console.error('Error checking table info:', err);
+      callback();
+      return;
+    }
+    
+    const hasTypeColumn = rows.some(row => row.name === 'type');
+    const hasFrontAudioPathColumn = rows.some(row => row.name === 'front_audio_path');
+    const hasFrontAudioNameColumn = rows.some(row => row.name === 'front_audio_name');
+    
+    let migrationsNeeded = 0;
+    let migrationsCompleted = 0;
+    
+    const completeMigration = () => {
+      migrationsCompleted++;
+      if (migrationsCompleted === migrationsNeeded) {
+        console.log('Database migration completed');
+        callback();
+      }
+    };
+    
+    // Add type column if missing
+    if (!hasTypeColumn) {
+      migrationsNeeded++;
+      database.run("ALTER TABLE cards ADD COLUMN type TEXT DEFAULT 'text'", (err) => {
+        if (err) console.error('Error adding type column:', err);
+        else console.log('Added type column to cards table');
+        completeMigration();
+      });
+    }
+    
+    // Add front_audio_path column if missing
+    if (!hasFrontAudioPathColumn) {
+      migrationsNeeded++;
+      database.run("ALTER TABLE cards ADD COLUMN front_audio_path TEXT", (err) => {
+        if (err) console.error('Error adding front_audio_path column:', err);
+        else console.log('Added front_audio_path column to cards table');
+        completeMigration();
+      });
+    }
+    
+    // Add front_audio_name column if missing
+    if (!hasFrontAudioNameColumn) {
+      migrationsNeeded++;
+      database.run("ALTER TABLE cards ADD COLUMN front_audio_name TEXT", (err) => {
+        if (err) console.error('Error adding front_audio_name column:', err);
+        else console.log('Added front_audio_name column to cards table');
+        completeMigration();
+      });
+    }
+    
+    // If no migrations needed, just call the callback
+    if (migrationsNeeded === 0) {
+      console.log('No database migrations needed');
+      callback();
+    }
   });
 };
 
@@ -230,6 +301,9 @@ ipcMain.handle('db-get-cards', (event, deckId) => {
         const cards = rows.map((row: any) => ({
           ...row,
           deckId: row.deck_id,
+          type: row.type || 'text',
+          frontAudioPath: row.front_audio_path,
+          frontAudioName: row.front_audio_name,
           tags: JSON.parse(row.tags || '[]'),
           createdAt: new Date(row.created_at),
           updatedAt: new Date(row.updated_at),
@@ -246,15 +320,18 @@ ipcMain.handle('db-get-cards', (event, deckId) => {
 ipcMain.handle('db-create-card', (event, card) => {
   return new Promise((resolve, reject) => {
     const stmt = database.prepare(`
-      INSERT INTO cards (id, deck_id, front, back, tags, created_at, updated_at, study_count, difficulty, interval, ease_factor)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (id, deck_id, front, back, type, front_audio_path, front_audio_name, tags, created_at, updated_at, study_count, difficulty, interval, ease_factor)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     stmt.run([
       card.id,
       card.deckId,
-      card.front,
+      card.front || null,
       card.back,
+      card.type || 'text',
+      card.frontAudioPath || null,
+      card.frontAudioName || null,
       JSON.stringify(card.tags),
       Date.now(),
       Date.now(),
@@ -295,6 +372,18 @@ ipcMain.handle('db-update-card', (event, id, updates) => {
     if (updates.back !== undefined) {
       fields.push('back = ?');
       values.push(updates.back);
+    }
+    if (updates.type !== undefined) {
+      fields.push('type = ?');
+      values.push(updates.type);
+    }
+    if (updates.frontAudioPath !== undefined) {
+      fields.push('front_audio_path = ?');
+      values.push(updates.frontAudioPath);
+    }
+    if (updates.frontAudioName !== undefined) {
+      fields.push('front_audio_name = ?');
+      values.push(updates.frontAudioName);
     }
     if (updates.tags !== undefined) {
       fields.push('tags = ?');
@@ -455,6 +544,56 @@ ipcMain.handle('db-update-setting', (event, key, value) => {
   });
 });
 
+// Audio file IPC handlers
+ipcMain.handle('audio-import-file', async (event, sourcePath: string) => {
+  try {
+    const result = await audioFileService.copyAudioFile(sourcePath);
+    return { success: true, audioId: result.id, internalPath: result.internalPath };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to import audio file'
+    };
+  }
+});
+
+ipcMain.handle('audio-delete-file', async (event, audioFileName: string) => {
+  try {
+    await audioFileService.deleteAudioFile(audioFileName);
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to delete audio file'
+    };
+  }
+});
+
+ipcMain.handle('audio-validate-file', async (event, filePath: string) => {
+  try {
+    const isValid = await audioFileService.validateAudioFile(filePath);
+    return { success: true, isValid };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to validate audio file'
+    };
+  }
+});
+
+ipcMain.handle('audio-get-file-path', async (event, audioFileName: string) => {
+  try {
+    const fullPath = audioFileService.getAudioFilePath(audioFileName);
+    const exists = await audioFileService.audioFileExists(audioFileName);
+    return { success: true, fullPath, exists };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get audio file path'
+    };
+  }
+});
+
 // CSV Utility Functions
 const parseCSVRow = (row: string): string[] => {
   const result: string[] = [];
@@ -513,17 +652,22 @@ const generateCSVData = async (deckId?: string): Promise<string> => {
       
       // Header row
       if (deckId) {
-        csvRows.push('Front,Back,Tags,Difficulty,Interval,Study Count');
+        csvRows.push('Type,Front,Front Audio File,Front Audio Name,Back,Tags,Difficulty,Interval,Study Count');
       } else {
-        csvRows.push('Deck Name,Deck Emoji,Front,Back,Tags,Difficulty,Interval,Study Count');
+        csvRows.push('Deck Name,Deck Emoji,Type,Front,Front Audio File,Front Audio Name,Back,Tags,Difficulty,Interval,Study Count');
       }
       
       // Data rows
       rows.forEach((row: any) => {
         const tags = JSON.parse(row.tags || '[]').join(';');
+        const cardType = row.type || 'text';
+        const front = row.front || '';
+        const frontAudioFile = row.front_audio_path || '';
+        const frontAudioName = row.front_audio_name || '';
+        
         const csvRow = deckId 
-          ? [row.front, row.back, tags, row.difficulty.toString(), row.interval.toString(), row.study_count.toString()]
-          : [row.deck_name, row.deck_emoji || '', row.front, row.back, tags, row.difficulty.toString(), row.interval.toString(), row.study_count.toString()];
+          ? [cardType, front, frontAudioFile, frontAudioName, row.back, tags, row.difficulty.toString(), row.interval.toString(), row.study_count.toString()]
+          : [row.deck_name, row.deck_emoji || '', cardType, front, frontAudioFile, frontAudioName, row.back, tags, row.difficulty.toString(), row.interval.toString(), row.study_count.toString()];
         
         // Escape quotes and wrap fields with commas or quotes in quotes
         const escapedRow = csvRow.map(field => {
@@ -618,13 +762,17 @@ const parseAndImportCSV = async (filePath: string, targetDeckId?: string): Promi
     };
     
     // Validate required headers
-    const frontIndex = headers.findIndex(h => h.includes('front'));
     const backIndex = headers.findIndex(h => h.includes('back'));
     
-    if (frontIndex === -1 || backIndex === -1) {
-      throw new Error('CSV must contain Front and Back columns');
+    if (backIndex === -1) {
+      throw new Error('CSV must contain Back column');
     }
     
+    // Find column indices for all supported fields
+    const typeIndex = headers.findIndex(h => h.includes('type'));
+    const frontIndex = headers.findIndex(h => h.includes('front') && !h.includes('audio'));
+    const frontAudioFileIndex = headers.findIndex(h => h.includes('front') && h.includes('audio') && h.includes('file'));
+    const frontAudioNameIndex = headers.findIndex(h => h.includes('front') && h.includes('audio') && h.includes('name'));
     const tagsIndex = headers.findIndex(h => h.includes('tag'));
     const deckNameIndex = headers.findIndex(h => h.includes('deck') && h.includes('name'));
     const deckEmojiIndex = headers.findIndex(h => h.includes('deck') && h.includes('emoji'));
@@ -637,16 +785,34 @@ const parseAndImportCSV = async (filePath: string, targetDeckId?: string): Promi
       try {
         const row = rows[i];
         
-        if (row.length < Math.max(frontIndex, backIndex) + 1) {
+        if (row.length < backIndex + 1) {
           results.errors.push(`Row ${i + 1}: Insufficient columns`);
           continue;
         }
         
-        const front = row[frontIndex]?.trim();
         const back = row[backIndex]?.trim();
+        if (!back) {
+          results.errors.push(`Row ${i + 1}: Back is required`);
+          continue;
+        }
         
-        if (!front || !back) {
-          results.errors.push(`Row ${i + 1}: Front and Back are required`);
+        // Determine card type
+        const cardType = typeIndex >= 0 ? (row[typeIndex]?.trim() || 'text') : 'text';
+        const front = frontIndex >= 0 ? (row[frontIndex]?.trim() || '') : '';
+        const frontAudioFile = frontAudioFileIndex >= 0 ? (row[frontAudioFileIndex]?.trim() || '') : '';
+        const frontAudioName = frontAudioNameIndex >= 0 ? (row[frontAudioNameIndex]?.trim() || '') : '';
+        
+        // Validate card type specific requirements
+        if (cardType === 'text' && !front) {
+          results.errors.push(`Row ${i + 1}: Text cards require Front text`);
+          continue;
+        }
+        if ((cardType === 'audio' || cardType === 'mixed') && !frontAudioFile) {
+          results.errors.push(`Row ${i + 1}: Audio/Mixed cards require Front Audio File`);
+          continue;
+        }
+        if (cardType === 'mixed' && !front) {
+          results.errors.push(`Row ${i + 1}: Mixed cards require both Front text and audio`);
           continue;
         }
         
@@ -674,8 +840,39 @@ const parseAndImportCSV = async (filePath: string, targetDeckId?: string): Promi
         const interval = intervalIndex >= 0 ? parseInt(row[intervalIndex]) || 1 : 1;
         const studyCount = studyCountIndex >= 0 ? parseInt(row[studyCountIndex]) || 0 : 0;
         
+        // Handle audio file import if specified
+        let finalAudioPath = '';
+        let finalAudioName = frontAudioName;
+        
+        if ((cardType === 'audio' || cardType === 'mixed') && frontAudioFile) {
+          try {
+            // Resolve audio file path relative to CSV file
+            const csvDir = path.dirname(filePath);
+            let audioFilePath = frontAudioFile;
+            
+            // If not absolute path, resolve relative to CSV file
+            if (!path.isAbsolute(audioFilePath)) {
+              audioFilePath = path.resolve(csvDir, audioFilePath);
+            }
+            
+            // Import the audio file
+            const audioResult = await audioFileService.copyAudioFile(audioFilePath);
+            finalAudioPath = audioResult.internalPath;
+            
+            // Use provided name or fall back to filename
+            if (!finalAudioName) {
+              finalAudioName = path.basename(audioFilePath);
+            }
+            
+            console.log(`Imported audio file: ${audioFilePath} -> ${finalAudioPath}`);
+          } catch (audioError) {
+            results.errors.push(`Row ${i + 1}: Audio file error - ${audioError instanceof Error ? audioError.message : 'Unknown error'}`);
+            continue;
+          }
+        }
+        
         // Create card
-        await createCardFromImport(deckId, front, back, tags, difficulty, interval, studyCount);
+        await createCardFromImport(deckId, front, back, tags, difficulty, interval, studyCount, cardType, finalAudioPath, finalAudioName);
         results.imported++;
         
       } catch (error) {
@@ -737,19 +934,22 @@ const findOrCreateDeck = async (name: string, emoji: string, results: any): Prom
   });
 };
 
-const createCardFromImport = async (deckId: string, front: string, back: string, tags: string[], difficulty: number, interval: number, studyCount: number): Promise<void> => {
+const createCardFromImport = async (deckId: string, front: string, back: string, tags: string[], difficulty: number, interval: number, studyCount: number, type: string = 'text', frontAudioPath?: string, frontAudioName?: string): Promise<void> => {
   return new Promise((resolve, reject) => {
     const cardId = Date.now().toString() + '_' + Math.random().toString(36).substr(2, 9);
     const stmt = database.prepare(`
-      INSERT INTO cards (id, deck_id, front, back, tags, created_at, updated_at, study_count, difficulty, interval, ease_factor)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cards (id, deck_id, front, back, type, front_audio_path, front_audio_name, tags, created_at, updated_at, study_count, difficulty, interval, ease_factor)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     stmt.run([
       cardId,
       deckId,
-      front,
+      front || null,
       back,
+      type,
+      frontAudioPath || null,
+      frontAudioName || null,
       JSON.stringify(tags),
       Date.now(),
       Date.now(),

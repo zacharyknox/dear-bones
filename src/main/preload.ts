@@ -23,4 +23,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // CSV File operations
   exportCSV: (deckId?: string) => ipcRenderer.invoke('export-csv', deckId),
   importCSV: (targetDeckId?: string) => ipcRenderer.invoke('import-csv', targetDeckId),
+  
+  // Audio file operations
+  audioImportFile: (sourcePath: string) => ipcRenderer.invoke('audio-import-file', sourcePath),
+  audioDeleteFile: (audioFileName: string) => ipcRenderer.invoke('audio-delete-file', audioFileName),
+  audioValidateFile: (filePath: string) => ipcRenderer.invoke('audio-validate-file', filePath),
+  audioGetFilePath: (audioFileName: string) => ipcRenderer.invoke('audio-get-file-path', audioFileName),
 }); 

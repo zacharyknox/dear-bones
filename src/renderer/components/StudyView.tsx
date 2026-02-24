@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, RotateCcw, Shuffle } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
+import { AudioPlayer } from './AudioPlayer';
+import { LatexText } from './LatexText';
 import type { AppView } from '../App';
 import type { Card } from '../../types';
+import { isTextCard, isAudioCard, isMixedCard, hasAudio } from '../../types';
 
 interface StudyViewProps {
   deckId: string | null;
@@ -151,14 +154,51 @@ export function StudyView({ deckId, onViewChange }: StudyViewProps) {
             className="card p-8 min-h-[300px] flex items-center justify-center cursor-pointer transform transition-transform hover:scale-105"
             onClick={handleFlip}
           >
-            <div className="text-center">
-              <div className="text-lg text-gray-900 dark:text-gray-100 mb-4 flashcard-text">
-                {isFlipped ? currentCard.back : currentCard.front}
-              </div>
-              {!isFlipped && (
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Click to reveal answer
-                </p>
+            <div className="text-center w-full">
+              {isFlipped ? (
+                // Show answer (always text)
+                <div className="text-lg text-gray-900 dark:text-gray-100 mb-4 flashcard-text">
+                  <LatexText text={currentCard.back} />
+                </div>
+              ) : (
+                // Show question based on card type
+                <div>
+                  {isTextCard(currentCard) && (
+                    <div className="text-lg text-gray-900 dark:text-gray-100 mb-4 flashcard-text">
+                      <LatexText text={currentCard.front} />
+                    </div>
+                  )}
+                  
+                  {isAudioCard(currentCard) && (
+                    <div className="mb-4">
+                      <AudioPlayer
+                        audioPath={currentCard.frontAudioPath}
+                        audioName={currentCard.frontAudioName}
+                        autoPlay={false}
+                        className="max-w-md mx-auto"
+                      />
+                    </div>
+                  )}
+                  
+                  {isMixedCard(currentCard) && (
+                    <div className="space-y-4">
+                      <div className="text-lg text-gray-900 dark:text-gray-100 flashcard-text">
+                        <LatexText text={currentCard.front} />
+                      </div>
+                      <AudioPlayer
+                        audioPath={currentCard.frontAudioPath}
+                        audioName={currentCard.frontAudioName}
+                        autoPlay={false}
+                        compact={true}
+                        className="max-w-md mx-auto"
+                      />
+                    </div>
+                  )}
+                  
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-4">
+                    Click to reveal answer
+                  </p>
+                </div>
               )}
             </div>
           </div>

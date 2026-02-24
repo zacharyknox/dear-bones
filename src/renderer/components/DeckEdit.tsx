@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Edit3, Trash2, Save, Download, Upload } from 'lucide-react';
+import { ArrowLeft, Plus, Edit3, Trash2, Save, Download, Upload, FileAudio, Type, Mic, File } from 'lucide-react';
 import { useAppStore } from '../store/appStore';
+import { AudioPlayer } from './AudioPlayer';
+import { LatexText } from './LatexText';
 import type { AppView } from '../App';
-import type { Deck, Card } from '../../types';
+import type { Deck, Card, CardType, CreateCardInput } from '../../types';
+import { isTextCard, isAudioCard, isMixedCard, hasAudio } from '../../types';
 
 interface DeckEditProps {
   deckId: string | null;
@@ -27,11 +30,16 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
   // Card form state
   const [showCardForm, setShowCardForm] = useState(false);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [cardType, setCardType] = useState<CardType>('text');
   const [cardForm, setCardForm] = useState({
     front: '',
     back: '',
+    frontAudioPath: '',
+    frontAudioName: '',
     tags: [] as string[],
   });
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioUploading, setAudioUploading] = useState(false);
 
   const [tagInput, setTagInput] = useState('');
   
@@ -74,33 +82,138 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
     setTagArray(tagArray.filter(tag => tag !== tagToRemove));
   };
 
+  const handleAudioFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setAudioFile(file);
+      if (!cardForm.frontAudioName) {
+        setCardForm(prev => ({ ...prev, frontAudioName: file.name }));
+      }
+    }
+  };
+
+  const resetCardForm = () => {
+    setCardForm({ front: '', back: '', frontAudioPath: '', frontAudioName: '', tags: [] });
+    setAudioFile(null);
+    setCardType('text');
+    setShowCardForm(false);
+    setEditingCardId(null);
+  };
+
   const handleCardSubmit = async () => {
-    if (!cardForm.front.trim() || !cardForm.back.trim()) return;
+    // Validate based on card type
+    if (!cardForm.back.trim()) return;
+    
+    if (cardType === 'text' && !cardForm.front.trim()) return;
+    if ((cardType === 'audio' || cardType === 'mixed') && !cardForm.frontAudioPath && !audioFile) return;
+    if (cardType === 'mixed' && !cardForm.front.trim()) return;
+    
     if (!deckId && !isEditing) return;
 
     const targetDeckId = deckId || (existingDeck?.id);
     if (!targetDeckId) return;
 
-    if (editingCardId) {
-      await updateCard(editingCardId, cardForm);
-    } else {
-      await createCard({
-        ...cardForm,
-        deckId: targetDeckId,
-      });
-    }
+    try {
+      let audioPath = cardForm.frontAudioPath;
+      let audioName = cardForm.frontAudioName;
+      
+      // Handle audio file upload if new file selected
+      if (audioFile && (cardType === 'audio' || cardType === 'mixed')) {
+        setAudioUploading(true);
+        const result = await window.electronAPI.audioImportFile(audioFile.path || audioFile.name);
+        
+        if (result.success) {
+          audioPath = result.internalPath;
+          audioName = audioFile.name;
+        } else {
+          console.error('Audio upload failed:', result.error);
+          return;
+        }
+      }
 
-    setCardForm({ front: '', back: '', tags: [] });
-    setShowCardForm(false);
-    setEditingCardId(null);
+      let cardData: CreateCardInput;
+
+      // Create card data based on type
+      switch (cardType) {
+        case 'text':
+          cardData = {
+            type: 'text',
+            deckId: targetDeckId,
+            front: cardForm.front,
+            back: cardForm.back,
+            tags: cardForm.tags,
+          };
+          break;
+        case 'audio':
+          cardData = {
+            type: 'audio',
+            deckId: targetDeckId,
+            back: cardForm.back,
+            frontAudioPath: audioPath,
+            frontAudioName: audioName,
+            tags: cardForm.tags,
+          };
+          break;
+        case 'mixed':
+          cardData = {
+            type: 'mixed',
+            deckId: targetDeckId,
+            front: cardForm.front,
+            back: cardForm.back,
+            frontAudioPath: audioPath,
+            frontAudioName: audioName,
+            tags: cardForm.tags,
+          };
+          break;
+        default:
+          return;
+      }
+
+      if (editingCardId) {
+        await updateCard(editingCardId, cardData);
+      } else {
+        await createCard(cardData);
+      }
+
+      // Reset form
+      resetCardForm();
+      
+    } catch (error) {
+      console.error('Error saving card:', error);
+    } finally {
+      setAudioUploading(false);
+    }
   };
 
   const handleEditCard = (card: Card) => {
-    setCardForm({
-      front: card.front,
-      back: card.back,
-      tags: card.tags,
-    });
+    setCardType(card.type);
+    
+    if (isTextCard(card)) {
+      setCardForm({
+        front: card.front,
+        back: card.back,
+        frontAudioPath: '',
+        frontAudioName: '',
+        tags: card.tags,
+      });
+    } else if (isAudioCard(card)) {
+      setCardForm({
+        front: '',
+        back: card.back,
+        frontAudioPath: card.frontAudioPath,
+        frontAudioName: card.frontAudioName,
+        tags: card.tags,
+      });
+    } else if (isMixedCard(card)) {
+      setCardForm({
+        front: card.front,
+        back: card.back,
+        frontAudioPath: card.frontAudioPath,
+        frontAudioName: card.frontAudioName,
+        tags: card.tags,
+      });
+    }
+    
     setEditingCardId(card.id);
     setShowCardForm(true);
   };
@@ -358,20 +471,118 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
                     {editingCardId ? 'Edit Card' : 'New Card'}
                   </h4>
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Front (Question) *
-                      </label>
-                      <textarea
-                        value={cardForm.front}
-                        onChange={(e) => setCardForm({ ...cardForm, front: e.target.value })}
-                        className="input"
-                        rows={3}
-                        placeholder="Enter the question or prompt..."
-                      />
+                  {/* Card Type Selection */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Card Type
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCardType('text')}
+                        className={`p-3 rounded-lg border transition-colors flex flex-col items-center space-y-1 ${
+                          cardType === 'text'
+                            ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                        }`}
+                      >
+                        <Type size={20} />
+                        <span className="text-xs font-medium">Text</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCardType('audio')}
+                        className={`p-3 rounded-lg border transition-colors flex flex-col items-center space-y-1 ${
+                          cardType === 'audio'
+                            ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                        }`}
+                      >
+                        <Mic size={20} />
+                        <span className="text-xs font-medium">Audio</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCardType('mixed')}
+                        className={`p-3 rounded-lg border transition-colors flex flex-col items-center space-y-1 ${
+                          cardType === 'mixed'
+                            ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-1">
+                          <Type size={14} />
+                          <Mic size={14} />
+                        </div>
+                        <span className="text-xs font-medium">Mixed</span>
+                      </button>
                     </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {/* Text Front (for text and mixed cards) */}
+                    {(cardType === 'text' || cardType === 'mixed') && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Front (Question) *
+                        </label>
+                        <textarea
+                          value={cardForm.front}
+                          onChange={(e) => setCardForm({ ...cardForm, front: e.target.value })}
+                          className="input"
+                          rows={3}
+                          placeholder="Enter the question or prompt..."
+                        />
+                      </div>
+                    )}
                     
+                    {/* Audio Front (for audio and mixed cards) */}
+                    {(cardType === 'audio' || cardType === 'mixed') && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Audio File {cardType === 'mixed' ? '' : '*'}
+                        </label>
+                        
+                        {/* Current Audio Display */}
+                        {cardForm.frontAudioPath && !audioFile && (
+                          <div className="mb-2">
+                            <AudioPlayer
+                              audioPath={cardForm.frontAudioPath}
+                              audioName={cardForm.frontAudioName}
+                              compact={true}
+                            />
+                          </div>
+                        )}
+                        
+                        {/* New Audio File Upload */}
+                        <div className="space-y-2">
+                          <input
+                            type="file"
+                            accept="audio/*"
+                            onChange={handleAudioFileSelect}
+                            className="input file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100"
+                          />
+                          {audioFile && (
+                            <p className="text-sm text-gray-600 dark:text-gray-400">
+                              Selected: {audioFile.name}
+                            </p>
+                          )}
+                        </div>
+                        
+                        {/* Audio Name Field */}
+                        <div className="mt-2">
+                          <input
+                            type="text"
+                            value={cardForm.frontAudioName}
+                            onChange={(e) => setCardForm({ ...cardForm, frontAudioName: e.target.value })}
+                            className="input"
+                            placeholder="Audio display name (optional)"
+                          />
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Back (Answer) - Always present */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                         Back (Answer) *
@@ -386,23 +597,28 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
                     </div>
                   </div>
 
-                  <div className="flex justify-end space-x-2">
+                  <div className="flex justify-end space-x-2 mt-4">
                     <button
-                      onClick={() => {
-                        setShowCardForm(false);
-                        setEditingCardId(null);
-                        setCardForm({ front: '', back: '', tags: [] });
-                      }}
+                      onClick={resetCardForm}
                       className="btn-secondary"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleCardSubmit}
-                      className="btn-primary"
-                      disabled={!cardForm.front.trim() || !cardForm.back.trim()}
+                      className="btn-primary flex items-center space-x-2"
+                      disabled={
+                        !cardForm.back.trim() || 
+                        (cardType === 'text' && !cardForm.front.trim()) ||
+                        (cardType === 'mixed' && !cardForm.front.trim()) ||
+                        ((cardType === 'audio' || cardType === 'mixed') && !cardForm.frontAudioPath && !audioFile) ||
+                        audioUploading
+                      }
                     >
-                      {editingCardId ? 'Update Card' : 'Add Card'}
+                      {audioUploading && (
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      )}
+                      <span>{editingCardId ? 'Update Card' : 'Add Card'}</span>
                     </button>
                   </div>
                 </div>
@@ -420,22 +636,68 @@ export function DeckEdit({ deckId, onViewChange }: DeckEditProps) {
                 <div className="space-y-3">
                   {existingCards.map((card) => (
                     <div key={card.id} className="flex items-start justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
-                            Front
-                          </h5>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 flashcard-text">
-                            {card.front}
-                          </p>
+                      <div className="flex-1">
+                        {/* Card Type Indicator */}
+                        <div className="flex items-center space-x-2 mb-2">
+                          {isTextCard(card) && (
+                            <>
+                              <Type size={14} className="text-blue-600 dark:text-blue-400" />
+                              <span className="text-xs font-medium text-blue-600 dark:text-blue-400">Text Card</span>
+                            </>
+                          )}
+                          {isAudioCard(card) && (
+                            <>
+                              <Mic size={14} className="text-green-600 dark:text-green-400" />
+                              <span className="text-xs font-medium text-green-600 dark:text-green-400">Audio Card</span>
+                            </>
+                          )}
+                          {isMixedCard(card) && (
+                            <>
+                              <div className="flex items-center space-x-1">
+                                <Type size={12} className="text-purple-600 dark:text-purple-400" />
+                                <Mic size={12} className="text-purple-600 dark:text-purple-400" />
+                              </div>
+                              <span className="text-xs font-medium text-purple-600 dark:text-purple-400">Mixed Card</span>
+                            </>
+                          )}
                         </div>
-                        <div>
-                          <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
-                            Back
-                          </h5>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 flashcard-text">
-                            {card.back}
-                          </p>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
+                              Front
+                            </h5>
+                            {isTextCard(card) && (
+                              <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 flashcard-text">
+                                <LatexText text={card.front} />
+                              </p>
+                            )}
+                            {isAudioCard(card) && (
+                              <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400">
+                                <FileAudio size={16} />
+                                <span className="truncate">{card.frontAudioName}</span>
+                              </div>
+                            )}
+                            {isMixedCard(card) && (
+                              <div className="space-y-1">
+                                <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-1 flashcard-text">
+                                  <LatexText text={card.front} />
+                                </p>
+                                <div className="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-500">
+                                  <FileAudio size={12} />
+                                  <span className="truncate">{card.frontAudioName}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <h5 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
+                              Back
+                            </h5>
+                            <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2 flashcard-text">
+                              <LatexText text={card.back} />
+                            </p>
+                          </div>
                         </div>
                       </div>
                       

@@ -47,8 +47,14 @@ export default function App() {
 
   const handleViewChange = (view: AppView, deckId?: string) => {
     setCurrentView(view);
-    if (deckId) {
+    if (deckId !== undefined) {
       setSelectedDeckId(deckId);
+    } else if (view === 'deck-edit') {
+      // Reset to null when creating a new deck (no deckId provided)
+      setSelectedDeckId(null);
+    } else if (view === 'decks') {
+      // Reset when returning to decks list to clear any previous selection
+      setSelectedDeckId(null);
     }
   };
 

@@ -9,11 +9,14 @@ export interface Deck {
   cardCount: number;
 }
 
-export interface Card {
+// Card Type System
+export type CardType = 'text' | 'audio' | 'mixed';
+
+export interface BaseCard {
   id: string;
   deckId: string;
-  front: string;
-  back: string;
+  type: CardType;
+  back: string; // Answer is always text
   tags: string[];
   createdAt: Date;
   updatedAt: Date;
@@ -23,6 +26,33 @@ export interface Card {
   interval: number; // Days until next review
   easeFactor: number; // SM2 ease factor
 }
+
+export interface TextCard extends BaseCard {
+  type: 'text';
+  front: string;
+}
+
+export interface AudioCard extends BaseCard {
+  type: 'audio';
+  frontAudioPath: string;
+  frontAudioName: string; // Display name for the audio
+}
+
+export interface MixedCard extends BaseCard {
+  type: 'mixed';
+  front: string;
+  frontAudioPath: string;
+  frontAudioName: string;
+}
+
+export type Card = TextCard | AudioCard | MixedCard;
+
+// Type guards for runtime checking
+export const isTextCard = (card: Card): card is TextCard => card.type === 'text';
+export const isAudioCard = (card: Card): card is AudioCard => card.type === 'audio';
+export const isMixedCard = (card: Card): card is MixedCard => card.type === 'mixed';
+export const hasAudio = (card: Card): card is AudioCard | MixedCard => 
+  card.type === 'audio' || card.type === 'mixed';
 
 export interface StudySession {
   id: string;

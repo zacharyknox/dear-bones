@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import type { Deck, Card, StudySession, StudyStats, AppSettings } from '../../types';
+import type { Deck, Card, StudySession, StudyStats, AppSettings, CardType, TextCard, AudioCard, MixedCard } from '../../types';
 
 // Extend window interface for Electron API
 declare global {
@@ -20,9 +20,19 @@ declare global {
       updateSetting: (key: string, value: any) => Promise<any>;
       exportCSV: (deckId?: string) => Promise<any>;
       importCSV: (targetDeckId?: string) => Promise<any>;
+      audioImportFile: (sourcePath: string) => Promise<any>;
+      audioDeleteFile: (audioFileName: string) => Promise<any>;
+      audioValidateFile: (filePath: string) => Promise<any>;
+      audioGetFilePath: (audioFileName: string) => Promise<any>;
     };
   }
 }
+
+// Input types for card creation (without auto-generated fields)
+type CreateTextCardInput = Omit<TextCard, 'id' | 'createdAt' | 'updatedAt' | 'studyCount' | 'difficulty' | 'interval' | 'easeFactor'>;
+type CreateAudioCardInput = Omit<AudioCard, 'id' | 'createdAt' | 'updatedAt' | 'studyCount' | 'difficulty' | 'interval' | 'easeFactor'>;
+type CreateMixedCardInput = Omit<MixedCard, 'id' | 'createdAt' | 'updatedAt' | 'studyCount' | 'difficulty' | 'interval' | 'easeFactor'>;
+type CreateCardInput = CreateTextCardInput | CreateAudioCardInput | CreateMixedCardInput;
 
 interface AppState {
   // Data
@@ -47,7 +57,7 @@ interface AppState {
   getDeck: (id: string) => Deck | undefined;
   
   // Card actions
-  createCard: (card: Omit<Card, 'id' | 'createdAt' | 'updatedAt' | 'studyCount' | 'difficulty' | 'interval' | 'easeFactor'>) => Promise<void>;
+  createCard: (card: CreateCardInput) => Promise<void>;
   updateCard: (id: string, updates: Partial<Card>) => Promise<void>;
   deleteCard: (id: string) => Promise<void>;
   getCardsByDeck: (deckId: string) => Card[];
@@ -184,8 +194,7 @@ export const useAppStore = create<AppState>()(
       // Card actions
       createCard: async (cardData) => {
         try {
-          const newCard: Card = {
-            ...cardData,
+          const baseCardData = {
             id: Date.now().toString(),
             createdAt: new Date(),
             updatedAt: new Date(),
@@ -194,6 +203,32 @@ export const useAppStore = create<AppState>()(
             interval: 1,
             easeFactor: 2.5,
           };
+
+          let newCard: Card;
+          
+          // Create appropriate card type based on input
+          switch (cardData.type) {
+            case 'text':
+              newCard = {
+                ...baseCardData,
+                ...cardData
+              } as TextCard;
+              break;
+            case 'audio':
+              newCard = {
+                ...baseCardData,
+                ...cardData
+              } as AudioCard;
+              break;
+            case 'mixed':
+              newCard = {
+                ...baseCardData,
+                ...cardData
+              } as MixedCard;
+              break;
+            default:
+              throw new Error('Invalid card type');
+          }
           
           await window.electronAPI.createCard(newCard);
           
@@ -232,6 +267,19 @@ export const useAppStore = create<AppState>()(
         try {
           const card = get().cards.find(c => c.id === id);
           if (!card) return;
+
+          // Clean up audio file if it exists
+          if (card.type === 'audio' || card.type === 'mixed') {
+            const audioCard = card as AudioCard | MixedCard;
+            if (audioCard.frontAudioPath) {
+              try {
+                await window.electronAPI.audioDeleteFile(audioCard.frontAudioPath);
+              } catch (audioError) {
+                console.warn('Could not delete audio file:', audioError);
+                // Don't fail card deletion if audio cleanup fails
+              }
+            }
+          }
 
           await window.electronAPI.deleteCard(id);
 
